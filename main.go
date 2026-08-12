@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -26,7 +27,9 @@ func main() {
 	os.Exit(status)
 }
 
-func initializeLogger() (*log.Logger, *os.File, error) {
+type closeFunc func() error
+
+func initializeLogger() (*log.Logger, closeFunc, error) {
 	logFile := os.Getenv("LINKO_LOG_FILE")
 
 	if logFile == "" {
@@ -46,17 +49,27 @@ func initializeLogger() (*log.Logger, *os.File, error) {
 	writer := io.MultiWriter(os.Stderr, bufferedFile)
 	logger := log.New(writer, "", log.LstdFlags)
 
-	return logger, file, nil
+	closeLogger := func() error {
+		if err := bufferedFile.Flush(); err != nil {
+			return err
+		}
+		return file.Close()
+	}
+
+	return logger, closeLogger, nil
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	logger, logFile, err := initializeLogger()
+	logger, closeLogger, err := initializeLogger()
 	if err != nil {
 		return 1
 	}
-	if logFile != nil {
-		defer logFile.Close()
-	}
+
+	defer func() {
+		if err := closeLogger(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to close logger: %v\n", err)
+		}
+	}()
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
